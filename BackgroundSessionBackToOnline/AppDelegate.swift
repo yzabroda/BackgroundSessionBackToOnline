@@ -19,7 +19,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         os_log("------ didFinishLaunchingWithOptions")
-        let _ = BigFileDownloadManager.shared.urlSession
 
         return true
     }
@@ -32,39 +31,38 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-        guard identifier == "com.bomzh.uu" else { return }
-
         os_log("------ handleEventsForBackgroundURLSession; state: %{public}d", application.applicationState.rawValue)
         os_log("------ handleEventsForBackgroundURLSession: backgroundTimeRemaining = %{public}f", application.backgroundTimeRemaining)
 
+        guard identifier == BigFileDownloadManager.backgroundSessionIdentifier else { return }
+
         backgroundCompletionHandler = completionHandler
+
+        BigFileDownloadManager.shared.resumeBackgroundDownload()
     }
 
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        backgroundTaskIdentifier = application.beginBackgroundTask { [weak self] in
-            guard let strongSelf = self else { return }
+        var bti: UIBackgroundTaskIdentifier!
 
-            application.endBackgroundTask(strongSelf.backgroundTaskIdentifier)
+        bti = application.beginBackgroundTask {
+            application.endBackgroundTask(bti)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(2)) {
-            os_log("------ Going to crash now!!!!!!!")
+            os_log("------ Going to kill myself now!!!!!!! %{public}d", bti.rawValue)
             exit(EXIT_SUCCESS)
         }
     }
 
-    var backgroundTaskIdentifier = UIBackgroundTaskIdentifier.invalid
-    
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
         os_log("------ applicationDidBecomeActive")
-        BigFileDownloadManager.shared.forceResume()
+//        BigFileDownloadManager.shared.forceResume()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

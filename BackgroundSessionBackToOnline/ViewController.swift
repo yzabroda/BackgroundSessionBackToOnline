@@ -16,6 +16,7 @@ class ViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        os_log("------ %{public}@", #function)
     }
 
 
@@ -58,29 +59,41 @@ class BigFileDownloadManager: NSObject {
 
 
     final func startDownload() {
-        for fileToDown in filesToDownload {
-            let url = URL(string: fileToDown)!
-            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 3.0)
+        guard currentFileIndex < filesToDownload.count else {
+            os_log("------ ------ Download complete!!!!!!!!!!!")
 
-            os_log("------ Going to create a downloadTask")
-            let downloadTask = urlSession.downloadTask(with: request)
-            overallProgress!.addChild(downloadTask.progress, withPendingUnitCount: 1)
+            return
         }
 
-        urlSession.getTasksWithCompletionHandler { _, _, downloadTasks in
-            DispatchQueue.main.async {
-                downloadTasks.first(where: { $0.state == .suspended })?.resume()
-            }
-        }
+        let fileToDown = filesToDownload[currentFileIndex]
+        let url = URL(string: fileToDown)!
+        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 3.0)
+
+        os_log("------ Going to create a downloadTask")
+        let downloadTask = urlSession.downloadTask(with: request)
+        overallProgress!.addChild(downloadTask.progress, withPendingUnitCount: 1)
+
+//        utilityQueue.sync {
+            downloadTask.resume()
+            os_log("------ Just called resume()")
+//        }
     }
 
 
-    final func forceResume() {
-        urlSession.getTasksWithCompletionHandler { _, _, downloadTasks in
-            OperationQueue.main.addOperation {
-                downloadTasks.first(where: { $0.state == .suspended })?.resume()
-            }
-        }
+//    final func forceResume() {
+//        urlSession.getTasksWithCompletionHandler { [weak self] _, _, downloadTasks in
+//            self?.utilityQueue.async {
+//                downloadTasks.first(where: { $0.state == .suspended })?.resume()
+//            }
+//        }
+//    }
+
+
+    final func resumeBackgroundDownload() {
+        currentFileIndex = UserDefaults.standard.integer(forKey: "Bomzh")
+
+        // Re-creates
+        let _ = urlSession
     }
 
 
@@ -93,22 +106,31 @@ class BigFileDownloadManager: NSObject {
 
 
     private(set) lazy var urlSession: URLSession = {
-        let config = URLSessionConfiguration.background(withIdentifier: "com.bomzh.uu")
+        let config = URLSessionConfiguration.background(withIdentifier: type(of: self).backgroundSessionIdentifier)
 
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
     private let filesToDownload = [
-        //        "https://devstreaming-cdn.apple.com/videos/wwdc/2017/250lnw83hnjfutowrg/250/250_sd_extend_your_apps_presence_with_deep_linking.mp4?dl=1",
+//        "https://devstreaming-cdn.apple.com/videos/wwdc/2017/250lnw83hnjfutowrg/250/250_sd_extend_your_apps_presence_with_deep_linking.mp4?dl=1",
         "https://devstreaming-cdn.apple.com/videos/tutorials/ensuring_beautiful_rich_links/ensuring_beautiful_rich_links_sd.mp4?dl=1",
         "https://devstreaming-cdn.apple.com/videos/tutorials/web_inspector_walkthrough/web_inspector_walkthrough_sd.mp4?dl=1",
-        "https://devstreaming-cdn.apple.com/videos/tutorials/using_web_inspector_with_tvos_apps/using_web_inspector_with_tvos_apps_sd.mp4?dl=1" // ,
-        //        "https://devstreaming-cdn.apple.com/videos/tutorials/20170912/202uhvrcg65c7/updating_your_app_for_apple_tv_4k/updating_your_app_for_apple_tv_4k_sd.mp4?dl=1"
+        "https://devstreaming-cdn.apple.com/videos/tutorials/using_web_inspector_with_tvos_apps/using_web_inspector_with_tvos_apps_sd.mp4?dl=1",
+        "https://devstreaming-cdn.apple.com/videos/tutorials/20170912/202uhvrcg65c7/updating_your_app_for_apple_tv_4k/updating_your_app_for_apple_tv_4k_sd.mp4?dl=1"
     ]
 
     private weak var overallProgress: Progress?
     private var currentFileIndex = 0
-    private var backgroundTaskIdentifier = UIBackgroundTaskIdentifier.invalid
+
+    private lazy var operationQueue: OperationQueue = {
+        let oq = OperationQueue()
+        oq.maxConcurrentOperationCount = 1
+//        oq.qualityOfService = .utility
+
+        return oq
+    }()
+
+    private var utilityQueue = DispatchQueue(label: "com.bomz.uu", qos: .utility)
 }
 
 
@@ -116,23 +138,27 @@ class BigFileDownloadManager: NSObject {
 extension BigFileDownloadManager: URLSessionDownloadDelegate {
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        os_log("------ Entering urlSessionDidFinishEvents(forBackgroundURLSession")
+
         DispatchQueue.main.async {
             let timeRemaining = UIApplication.shared.backgroundTimeRemaining
             os_log("------ urlSessionDidFinishEvents: backgroundTimeRemaining = %{public}f", timeRemaining)
-        }
 
-        DispatchQueue.main.async {
             guard let appDelegate = UIApplication.shared.delegate as? AppDelegate,
                 let backgroundCompletionHandler =
                 appDelegate.backgroundCompletionHandler else {
                     return
             }
+
+            os_log("------ urlSessionDidFinishEvents: calling backgroundCompletionHandler")
             backgroundCompletionHandler()
         }
     }
 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        os_log("------ Entering urlSession didCompleteWithError")
+
         DispatchQueue.main.async {
             let timeRemaining = UIApplication.shared.backgroundTimeRemaining
             os_log("------ didCompleteWithError: backgroundTimeRemaining = %{public}f", timeRemaining)
@@ -144,48 +170,60 @@ extension BigFileDownloadManager: URLSessionDownloadDelegate {
             return
         }
 
-        session.getTasksWithCompletionHandler { _, _, downloadTasks in
-            DispatchQueue.main.async {
-                downloadTasks.first(where: { $0.state == .suspended })?.resume()
-            }
-        }
-
-//        guard let response = task.response as? HTTPURLResponse else { return }
-//        os_log("------ didCompleteWithError: nil; response: %{public}d", response.statusCode)
-
-//        DispatchQueue.main.async { [weak self] in
+//        let nextOperation = BlockOperation { [weak self] in
 //            guard let strongSelf = self else { return }
-//        backgroundTaskIdentifier = UIApplication.shared.beginBackgroundTask(withName: "com.yz.download-next-file") { [weak self] in
-//            guard let strongSelf = self else { return }
-//
-//            UIApplication.shared.endBackgroundTask(strongSelf.backgroundTaskIdentifier)
-//        }
-
-//        DispatchQueue.main.async {
-//            os_log("------ Right after beginBackgroundTask: backgroundTimeRemaining: %{public}f", UIApplication.shared.backgroundTimeRemaining)
-//        }
-        
-//        let strongSelf = self
+//            os_log("------ Inside nextOperation")
 
 //            strongSelf.currentFileIndex += 1
-//        UserDefaults.standard.set(strongSelf.currentFileIndex, forKey: "Bomzh")
+//            UserDefaults.standard.set(strongSelf.currentFileIndex, forKey: "Bomzh")
 //            strongSelf.startDownload()
 //        }
 
-//        if backgroundTaskIdentifier != .invalid {
-//            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
+        currentFileIndex += 1
+        UserDefaults.standard.set(currentFileIndex, forKey: "Bomzh")
+        startDownload()
+
+//        let taskIdentifier = UIApplication.shared.beginBackgroundTask {
+//            nextOperation.cancel()
+//            os_log("------ Unable to start download of file #%{public}d", self.currentFileIndex)
 //        }
+//
+//        guard taskIdentifier != .invalid else {
+//            os_log("------ Unable to start download of file #%{public}d as we unable to beginBackgroundTask", currentFileIndex)
+//
+//            return
+//        }
+//
+//        nextOperation.completionBlock = {
+//            UIApplication.shared.endBackgroundTask(taskIdentifier)
+//        }
+
+//        operationQueue.addOperations([nextOperation], waitUntilFinished: true)
+//        os_log("------ nextOperation looks finished")
     }
 
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        os_log("------ Entering urlSession didFinishDownloadingTo")
+
+        DispatchQueue.main.async {
+            let timeRemaining = UIApplication.shared.backgroundTimeRemaining
+            os_log("------ didFinishDownloadingTo: backgroundTimeRemaining = %{public}f", timeRemaining)
+        }
+
+        guard let response = downloadTask.response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
+            os_log("------ !!!! Server side error!!! Unable to download!!!")
+
+            return
+        }
+
         guard let documentURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             os_log("------ FATAL!!!! Unable to find .downloadsDirectory, in: .userDomainMask")
 
             return
         }
 
-        let docURL = documentURL.appendingPathComponent("Temp")
+        let docURL = documentURL.appendingPathComponent("BomzhTemp")
 
         do {
             try FileManager.default.createDirectory(at: docURL, withIntermediateDirectories: false, attributes: nil)
@@ -197,25 +235,17 @@ extension BigFileDownloadManager: URLSessionDownloadDelegate {
 //            let zzz = try FileManager.default.contentsOfDirectory(at: docURL, includingPropertiesForKeys: nil, options: [])
 //            print("\(zzz)")
 
-            let loc = docURL.appendingPathComponent("aaa\(currentFileIndex).zip")
+            let loc = docURL.appendingPathComponent("aaa\(currentFileIndex).mp4")
             os_log("------ Target filepath: %{public}@", loc.path)
 
             try FileManager.default.moveItem(at: location, to: loc)
             os_log("------ Successfully moved item to %{public}@", loc.path)
+//            let attribs = try FileManager.default.attributesOfItem(atPath: loc.path)
+//            let attrs = "\(attribs)"
+//            os_log("------ File attributes: %{public}@", attrs)
         } catch {
             os_log("------ FATAL!!! %{public}@", error.localizedDescription)
         }
-
-        currentFileIndex += 1
-
-        DispatchQueue.main.async {
-            let timeRemaining = UIApplication.shared.backgroundTimeRemaining
-            os_log("------ didFinishDownloadingTo: backgroundTimeRemaining = %{public}f", timeRemaining)
-        }
-
-//        guard let response = downloadTask.response as? HTTPURLResponse else { return }
-
-//        os_log("------ didFinishDownloadingTo; response: %{public}d", response.statusCode)
     }
 
 
